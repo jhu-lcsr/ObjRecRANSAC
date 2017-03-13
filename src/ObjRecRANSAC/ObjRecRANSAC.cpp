@@ -24,6 +24,7 @@
 #include <pcl/features/normal_3d.h>
 #include <pcl/surface/gp3.h>
 
+#define OBJ_REC_RANSAC_VERBOSE
 
 template <class T>
 static T* vec2a(std::vector<T> &vec) {
@@ -77,6 +78,90 @@ ObjRecRANSAC::ObjRecRANSAC(double pairwidth, double voxelsize, double relNumOfPa
 ObjRecRANSAC::~ObjRecRANSAC()
 {
   this->clear();
+}
+
+void ObjRecRANSAC::setSceneDataForHypothesisCheck(vtkPoints* scene)
+{
+  mInputScene = scene;
+  // Initialize
+  this->buildSceneOctree(scene, mVoxelSize);
+  mSceneRangeImage.buildFromOctree(mSceneOctree, mAbsZDistThresh, mAbsZDistThresh);
+  mOccupiedPixelsByShapes.clear();
+}
+
+double ObjRecRANSAC::checkHypothesesConfidence(AcceptedHypothesis &hypothesis)
+{
+  mShapes.clear();
+  std::string label(hypothesis.model_entry->getUserData()->getLabel());
+
+  // fill the hypothesis with the model information
+  hypothesis.model_entry = mModelDatabase.getModelEntry(label_to_poly_map_[label]);
+  list<AcceptedHypothesis> tmp_hypotheses;
+  tmp_hypotheses.push_back(hypothesis);
+  this->hypotheses2Shapes(tmp_hypotheses, mShapes);
+  return mShapes[0]->getConfidence();
+}
+
+p_shape_ptr ObjRecRANSAC::getBestShapePtr(p_shape_ptr shape)
+{
+  p_shape_ptr better_shape = this->map_of_better_shape[shape];
+  // if (shape) std::cerr << shape << " -> ";
+  // else
+  // {  std::cerr << "No ptr -> ";  }
+  if (better_shape)
+  {
+    p_shape_ptr even_better_shape = this->map_of_better_shape[better_shape];
+    if (even_better_shape)
+    {
+      this->map_of_better_shape[shape] = this->getBestShapePtr(better_shape);
+      return this->map_of_better_shape[shape];
+    }
+    else
+    {
+      // std::cerr << better_shape << " -> Best Shape" << std::endl;
+      return better_shape;
+    }
+  }
+  // std::cerr << "Best Shape" << std::endl;
+  return p_shape_ptr();
+}
+
+void ObjRecRANSAC::generateAlternateSolutionFromFilteredShapes(const list<AcceptedHypothesis> &accepted_hypotheses,
+  const vector<boost::shared_ptr<ORRPointSetShape> > &shapes, 
+  const list<boost::shared_ptr<ORRPointSetShape> > &filtered_shapes)
+{
+  // THIS ONLY WORKS UNDER ASSUMPTION THAT THERE IS ONLY ONE OBJECT CLASS PER ObjRecRANSAC
+  this->object_hypothesis_list_.clear();
+  this->object_hypothesis_list_.resize(filtered_shapes.size());
+
+  std::map< boost::shared_ptr<ORRPointSetShape>, std::size_t> shape_vector_index;
+  // std::map<std::string, int> shape_index;
+  std::size_t counter = 1;
+  for (list<boost::shared_ptr<ORRPointSetShape> >::const_iterator it = filtered_shapes.begin(); it != filtered_shapes.end(); ++it)
+  {
+    shape_vector_index[(*it)] = counter++;
+  }
+
+  counter = 0;
+  // NOTE: accepted hypothesis and shapes element is aligned, which makes this work
+  for (list<AcceptedHypothesis>::const_iterator it = accepted_hypotheses.begin(); it!= accepted_hypotheses.end(); ++it)
+  {
+    boost::shared_ptr< ORRPointSetShape> shape_ptr = this->getBestShapePtr(shapes[counter]);
+    if (!shape_ptr) shape_ptr = shapes[counter];
+    std::size_t vector_index = shape_vector_index[shape_ptr];
+    this->object_hypothesis_list_[vector_index].push_back((*it));
+    counter++;
+  }
+}
+
+std::vector<std::vector<AcceptedHypothesis> > ObjRecRANSAC::getShapeHypothesis()
+{
+  for (std::size_t i = 0; i < this->object_hypothesis_list_.size(); i++)
+  {
+    std::string label (this->object_hypothesis_list_[i][0].model_entry->getUserData()->getLabel());
+    std::cerr << "Object " << label << i << ": " << this->object_hypothesis_list_[i].size() << std::endl;
+  }
+  return this->object_hypothesis_list_;
 }
 
 //=============================================================================================================================
@@ -175,6 +260,8 @@ bool ObjRecRANSAC::addModel(vtkPolyData* model, UserData* userData)
   double relNumOfPairs = 1.0;
   // Create a new entry in the data base
   bool result = mModelDatabase.addModel(model, userData, mNumOfPointsPerLayer, relNumOfPairs);
+  
+  label_to_poly_map_[std::string(userData->getLabel())] = model;
 
   if ( relNumOfPairs < mRelNumOfPairsInTheHashTable )
     mRelNumOfPairsInTheHashTable = relNumOfPairs;
@@ -442,16 +529,26 @@ int ObjRecRANSAC::doRecognition(vtkPoints* scene, double successProbability, lis
   // Accept hypotheses
   tictoc_names.push_back("accept hypotheses"); intraStopwatch.start();
   this->acceptHypotheses(accepted_hypotheses);
+  // this->object_hypothesis_list_ = accepted_hypotheses;
+  std::cerr << "Accepted Hypothesis: " << accepted_hypotheses.size() << std::endl;
+
   tictocs.push_back(intraStopwatch.stop());
   // Convert the accepted hypotheses to shapes
   tictoc_names.push_back("convert to shapes"); intraStopwatch.start();
   this->hypotheses2Shapes(accepted_hypotheses, mShapes);
+  std::cerr << "Number of shapes: " << mShapes.size() << std::endl;
   tictocs.push_back(intraStopwatch.stop());
 
   // Filter the weak hypotheses
   tictoc_names.push_back("filter weak"); intraStopwatch.start();
+  this->map_of_better_shape.clear();
+  // std::map<p_shape_ptr, p_shape_ptr > map_of_better_shape;
   this->gridBasedFiltering(mShapes, detectedShapes);
+  std::cerr << "Filtered shapes: " << detectedShapes.size() << std::endl;
   tictocs.push_back(intraStopwatch.stop());
+
+  this->generateAlternateSolutionFromFilteredShapes(accepted_hypotheses, mShapes, detectedShapes);
+  // this->getShapeHypothesis();
 
   // Save the shapes in 'out'
   tictoc_names.push_back("save shapes"); intraStopwatch.start();
@@ -693,7 +790,7 @@ void ObjRecRANSAC::generateHypotheses(const list<OrientedPair>& pairs)
 #endif
   }
 #ifdef OBJ_REC_RANSAC_VERBOSE
-  printf("\r%.1lf%% done [%i hypotheses]\n", ((double)i)*factor, mNumOfHypothesea); fflush(stdout);
+  printf("\r%.1lf%% done [%i hypotheses]\n", ((double)i)*factor, mNumOfHypotheses); fflush(stdout);
 
 #endif
 
@@ -959,9 +1056,12 @@ void ObjRecRANSAC::acceptHypotheses(list<AcceptedHypothesis>& acceptedHypotheses
     }
   }
 
+  std::cerr << "Number of accepted hypotheses: " << acceptedHypotheses.size() << std::endl;
+
 #ifdef OBJ_REC_RANSAC_VERBOSE
   printf("%i accepted.\n", (int)acceptedHypotheses.size()); fflush(stdout);
 #endif
+
 }
 
 //=============================================================================================================================
@@ -1079,6 +1179,9 @@ void ObjRecRANSAC::gridBasedFiltering(vector<boost::shared_ptr<ORRPointSetShape>
   set<std::pair<int,int>, bool(*)(std::pair<int,int>, std::pair<int,int>)> both_on(cmp_int_pairs);
   std::pair<int,int> on_pair;
 
+  // TODO: Make a map of result id that associate the shapes/hypothesis with the resulting object id
+  // std::map<boost::shared_ptr<ORRPointSetShape>, boost::shared_ptr<ORRPointSetShape> > map_of_better_shape;
+
 #ifdef OBJ_REC_RANSAC_VERBOSE
   printf("ObjRecRANSAC::%s(): We have %i shapes to filter.\n", __func__, (int)shapes.size());
 #endif
@@ -1108,19 +1211,28 @@ void ObjRecRANSAC::gridBasedFiltering(vector<boost::shared_ptr<ORRPointSetShape>
 
         if ( this->significantIntersection(*it1, *it2) )
         {
+          // TODO: Set the turned off object id to the turned on object id, so that we will have a collection of main object id and possible object id
           if ( (*it1)->getNumberOfOccupiedScenePixels() <= (*it2)->getNumberOfOccupiedScenePixels() )
           {
 #ifdef OBJ_REC_RANSAC_VERBOSE_1
             printf("[turn off %s]\n", (*it1)->getLabel());
 #endif
             (*it1)->setSceneStateOff();
+            // std::cerr << " Turn off pointer1 " << (*it1) << " to " << (*it2) << std::endl;
+            this->map_of_better_shape[ (*it1) ] = (*it2);
+            // (*it1)->getUserData()->setBetterShapePtr(boost::static_pointer_cast<void>( *it2 ));
           }
           else
           {
 #ifdef OBJ_REC_RANSAC_VERBOSE_1
             printf("[turn off %s]\n", (*it2)->getLabel());
 #endif
-            (*it2)->setSceneStateOff();
+            if ((*it2)->isSceneStateOn())
+            {
+              (*it2)->setSceneStateOff();
+              // std::cerr << " Turn off pointer2 " << (*it2) << " to " << (*it1) << std::endl;
+              this->map_of_better_shape[ (*it2) ] = (*it1);
+            }
           }
         }
         else
