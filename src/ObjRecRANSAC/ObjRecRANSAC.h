@@ -56,9 +56,9 @@ public:
 
   // CUSTOM FUNCTION FOR SCENE PARSING
   void setSceneDataForHypothesisCheck(vtkPoints* scene);
-  double checkHypothesesConfidence(AcceptedHypothesis &hypothesis);
+  double checkHypothesesConfidence(AcceptedHypothesis &hypothesis, std::string &label);
 
-  p_shape_ptr getBestShapePtr(p_shape_ptr shape);
+  p_shape_ptr getBestShapePtr(const p_shape_ptr shape);
   
   void generateAlternateSolutionFromFilteredShapes(const list<AcceptedHypothesis> &accepted_hypotheses,
   const vector<boost::shared_ptr<ORRPointSetShape> > &shapes, 

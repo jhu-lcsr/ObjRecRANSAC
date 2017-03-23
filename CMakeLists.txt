@@ -19,6 +19,9 @@ ENDIF(OBJREC_USE_CUDA)
 
 find_package(Boost COMPONENTS thread system REQUIRED)
 include_directories(${Boost_INCLUDE_DIRS})
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake")
+find_package(Eigen3)
+include_directories(${EIGEN3_INCLUDE_DIR})
 
 find_package(PCL REQUIRED)
 find_package(OpenMP)
@@ -36,7 +39,6 @@ IF(NOT OpenCV_FOUND)
   If OpenCV is installed but cmake can not find it, set the OPENCV_DIR entry to the folder which contains the file OpenCVConfig.cmake")
 ENDIF(NOT OpenCV_FOUND)
 
-find_package(PCL REQUIRED)
 include_directories(${PCL_INCLUDE_DIRS})
 link_directories(${PCL_LIBRARY_DIRS})
 add_definitions(${PCL_DEFINITIONS})

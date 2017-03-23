@@ -89,10 +89,10 @@ void ObjRecRANSAC::setSceneDataForHypothesisCheck(vtkPoints* scene)
   mOccupiedPixelsByShapes.clear();
 }
 
-double ObjRecRANSAC::checkHypothesesConfidence(AcceptedHypothesis &hypothesis)
+double ObjRecRANSAC::checkHypothesesConfidence(AcceptedHypothesis &hypothesis, std::string &label)
 {
   mShapes.clear();
-  std::string label(hypothesis.model_entry->getUserData()->getLabel());
+  // std::string label(hypothesis.model_entry->getUserData()->getLabel());
 
   // fill the hypothesis with the model information
   hypothesis.model_entry = mModelDatabase.getModelEntry(label_to_poly_map_[label]);
@@ -102,7 +102,7 @@ double ObjRecRANSAC::checkHypothesesConfidence(AcceptedHypothesis &hypothesis)
   return mShapes[0]->getConfidence();
 }
 
-p_shape_ptr ObjRecRANSAC::getBestShapePtr(p_shape_ptr shape)
+p_shape_ptr ObjRecRANSAC::getBestShapePtr(const p_shape_ptr shape)
 {
   p_shape_ptr better_shape = this->map_of_better_shape[shape];
   // if (shape) std::cerr << shape << " -> ";
@@ -136,7 +136,7 @@ void ObjRecRANSAC::generateAlternateSolutionFromFilteredShapes(const list<Accept
 
   std::map< boost::shared_ptr<ORRPointSetShape>, std::size_t> shape_vector_index;
   // std::map<std::string, int> shape_index;
-  std::size_t counter = 1;
+  std::size_t counter = 0;
   for (list<boost::shared_ptr<ORRPointSetShape> >::const_iterator it = filtered_shapes.begin(); it != filtered_shapes.end(); ++it)
   {
     shape_vector_index[(*it)] = counter++;
@@ -148,9 +148,16 @@ void ObjRecRANSAC::generateAlternateSolutionFromFilteredShapes(const list<Accept
   {
     boost::shared_ptr< ORRPointSetShape> shape_ptr = this->getBestShapePtr(shapes[counter]);
     if (!shape_ptr) shape_ptr = shapes[counter];
-    std::size_t vector_index = shape_vector_index[shape_ptr];
-    this->object_hypothesis_list_[vector_index].push_back((*it));
-    counter++;
+    if (shape_vector_index.find(shape_ptr) != shape_vector_index.end())
+    {
+      std::size_t vector_index = shape_vector_index[shape_ptr];
+      this->object_hypothesis_list_[vector_index].push_back((*it));
+    }
+    else
+    {
+      std::cerr << "Error, cannot find ptr: " << shape_ptr << " in the list of best shapes.\n";
+    }
+    ++counter;
   }
 }
 
@@ -159,7 +166,7 @@ std::vector<std::vector<AcceptedHypothesis> > ObjRecRANSAC::getShapeHypothesis()
   for (std::size_t i = 0; i < this->object_hypothesis_list_.size(); i++)
   {
     std::string label (this->object_hypothesis_list_[i][0].model_entry->getUserData()->getLabel());
-    std::cerr << "Object " << label << i << ": " << this->object_hypothesis_list_[i].size() << std::endl;
+    std::cerr << "Object " << label << " " << i + 1 << ": " << this->object_hypothesis_list_[i].size() << std::endl;
   }
   return this->object_hypothesis_list_;
 }
