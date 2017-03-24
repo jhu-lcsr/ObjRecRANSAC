@@ -92,14 +92,30 @@ void ObjRecRANSAC::setSceneDataForHypothesisCheck(vtkPoints* scene)
 double ObjRecRANSAC::checkHypothesesConfidence(AcceptedHypothesis &hypothesis, std::string &label)
 {
   mShapes.clear();
-  // std::string label(hypothesis.model_entry->getUserData()->getLabel());
 
   // fill the hypothesis with the model information
+  std::cerr << "Getting model entry.\n";
+  if (label_to_poly_map_.find(label) == label_to_poly_map_.end())
+  {
+    std::cerr << "ERROR: No mesh data for input object " << label << std::endl;
+    return 0.0;
+  }
+
   hypothesis.model_entry = mModelDatabase.getModelEntry(label_to_poly_map_[label]);
   list<AcceptedHypothesis> tmp_hypotheses;
   tmp_hypotheses.push_back(hypothesis);
-  this->hypotheses2Shapes(tmp_hypotheses, mShapes);
-  return mShapes[0]->getConfidence();
+  std::cerr << "Calculating hypothesis confidence.\n";
+  this->hypotheses2Shapes(tmp_hypotheses, mShapes, true);
+  if (mShapes.size() > 0)
+  {
+    std::cerr << "Hypothesis confidence: " << mShapes[0]->getConfidence() << std::endl;
+    return mShapes[0]->getConfidence();
+  }
+  else
+  {
+    std::cerr << "Fail to get the hypothesis confidence.\n";
+    return 0.0;
+  }
 }
 
 p_shape_ptr ObjRecRANSAC::getBestShapePtr(const p_shape_ptr shape)
@@ -148,6 +164,7 @@ void ObjRecRANSAC::generateAlternateSolutionFromFilteredShapes(const list<Accept
   {
     boost::shared_ptr< ORRPointSetShape> shape_ptr = this->getBestShapePtr(shapes[counter]);
     if (!shape_ptr) shape_ptr = shapes[counter];
+
     if (shape_vector_index.find(shape_ptr) != shape_vector_index.end())
     {
       std::size_t vector_index = shape_vector_index[shape_ptr];
@@ -166,7 +183,7 @@ std::vector<std::vector<AcceptedHypothesis> > ObjRecRANSAC::getShapeHypothesis()
   for (std::size_t i = 0; i < this->object_hypothesis_list_.size(); i++)
   {
     std::string label (this->object_hypothesis_list_[i][0].model_entry->getUserData()->getLabel());
-    std::cerr << "Object " << label << " " << i + 1 << ": " << this->object_hypothesis_list_[i].size() << std::endl;
+    std::cerr << "Object " << label << " " << i + 1 << " alternate poses : " << this->object_hypothesis_list_[i].size() << std::endl;
   }
   return this->object_hypothesis_list_;
 }
@@ -1073,7 +1090,7 @@ void ObjRecRANSAC::acceptHypotheses(list<AcceptedHypothesis>& acceptedHypotheses
 
 //=============================================================================================================================
 
-void ObjRecRANSAC::hypotheses2Shapes(list<AcceptedHypothesis>& hypotheses, vector<boost::shared_ptr<ORRPointSetShape> >& shapes)
+void ObjRecRANSAC::hypotheses2Shapes(list<AcceptedHypothesis>& hypotheses, vector<boost::shared_ptr<ORRPointSetShape> >& shapes, bool verbose)
 {
   GeometryProcessor geom_processor;
   const double *mp;
@@ -1099,6 +1116,11 @@ void ObjRecRANSAC::hypotheses2Shapes(list<AcceptedHypothesis>& hypotheses, vecto
     numOfPoints = (*hypo_it).model_entry->getOwnPointSet()->getNumberOfPoints();
     rigid_transform = (*hypo_it).rigid_transform;
     model_entry = (*hypo_it).model_entry;
+    if (verbose)
+    {
+      std::cerr << "Hypo number of points: " << numOfPoints << std::endl;
+    }
+
     shape.reset();
     support = 0;
     // Get the current shape id
@@ -1112,7 +1134,9 @@ void ObjRecRANSAC::hypotheses2Shapes(list<AcceptedHypothesis>& hypotheses, vecto
       pixel = mSceneRangeImage.getSafePixel(p[0], p[1], x, y);
       // Check if we have a valid pixel
       if ( pixel == NULL )
+      {
         continue;
+      }
 
       // Check if the pixel is OK
       if ( pixel->x <= p[2] && p[2] <= pixel->y )
