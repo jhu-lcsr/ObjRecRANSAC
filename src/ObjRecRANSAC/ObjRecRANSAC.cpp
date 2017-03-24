@@ -105,7 +105,7 @@ double ObjRecRANSAC::checkHypothesesConfidence(AcceptedHypothesis &hypothesis, s
   list<AcceptedHypothesis> tmp_hypotheses;
   tmp_hypotheses.push_back(hypothesis);
   std::cerr << "Calculating hypothesis confidence.\n";
-  this->hypotheses2Shapes(tmp_hypotheses, mShapes, true);
+  this->hypotheses2Shapes(tmp_hypotheses, mShapes);
   if (mShapes.size() > 0)
   {
     std::cerr << "Hypothesis confidence: " << mShapes[0]->getConfidence() << std::endl;
@@ -1090,7 +1090,7 @@ void ObjRecRANSAC::acceptHypotheses(list<AcceptedHypothesis>& acceptedHypotheses
 
 //=============================================================================================================================
 
-void ObjRecRANSAC::hypotheses2Shapes(list<AcceptedHypothesis>& hypotheses, vector<boost::shared_ptr<ORRPointSetShape> >& shapes, bool verbose)
+void ObjRecRANSAC::hypotheses2Shapes(list<AcceptedHypothesis>& hypotheses, vector<boost::shared_ptr<ORRPointSetShape> >& shapes)
 {
   GeometryProcessor geom_processor;
   const double *mp;

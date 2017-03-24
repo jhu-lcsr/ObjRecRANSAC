@@ -130,7 +130,7 @@ protected:
                                  const double* scenePoint2, const double* sceneNormal2, HashTableCell** cells,
                                  int numOfCells, int pair_id);
   void acceptHypotheses(list<AcceptedHypothesis>& acceptedHypotheses);
-  void hypotheses2Shapes(list<AcceptedHypothesis>& hypotheses, vector<boost::shared_ptr<ORRPointSetShape> >& shapes, bool verbose = false);
+  void hypotheses2Shapes(list<AcceptedHypothesis>& hypotheses, vector<boost::shared_ptr<ORRPointSetShape> >& shapes);
 
   void clear_rec();
   void init_rec(vtkPoints* scene);
