@@ -94,7 +94,7 @@ double ObjRecRANSAC::checkHypothesesConfidence(AcceptedHypothesis &hypothesis, s
   mShapes.clear();
 
   // fill the hypothesis with the model information
-  std::cerr << "Getting model entry.\n";
+  // std::cerr << "Getting model entry.\n";
   if (label_to_poly_map_.find(label) == label_to_poly_map_.end())
   {
     std::cerr << "ERROR: No mesh data for input object " << label << std::endl;
@@ -104,11 +104,11 @@ double ObjRecRANSAC::checkHypothesesConfidence(AcceptedHypothesis &hypothesis, s
   hypothesis.model_entry = mModelDatabase.getModelEntry(label_to_poly_map_[label]);
   list<AcceptedHypothesis> tmp_hypotheses;
   tmp_hypotheses.push_back(hypothesis);
-  std::cerr << "Calculating hypothesis confidence.\n";
+  // std::cerr << "Calculating hypothesis confidence.\n";
   this->hypotheses2Shapes(tmp_hypotheses, mShapes);
   if (mShapes.size() > 0)
   {
-    std::cerr << "Hypothesis confidence: " << mShapes[0]->getConfidence() << std::endl;
+    // std::cerr << "Hypothesis confidence: " << mShapes[0]->getConfidence() << std::endl;
     return mShapes[0]->getConfidence();
   }
   else
@@ -160,6 +160,7 @@ void ObjRecRANSAC::generateAlternateSolutionFromFilteredShapes(const list<Accept
 
   counter = 0;
   // NOTE: accepted hypothesis and shapes element is aligned, which makes this work
+
   for (list<AcceptedHypothesis>::const_iterator it = accepted_hypotheses.begin(); it!= accepted_hypotheses.end(); ++it)
   {
     boost::shared_ptr< ORRPointSetShape> shape_ptr = this->getBestShapePtr(shapes[counter]);
@@ -168,7 +169,10 @@ void ObjRecRANSAC::generateAlternateSolutionFromFilteredShapes(const list<Accept
     if (shape_vector_index.find(shape_ptr) != shape_vector_index.end())
     {
       std::size_t vector_index = shape_vector_index[shape_ptr];
-      this->object_hypothesis_list_[vector_index].push_back((*it));
+
+      // Put the best hypothesis in the front of the vector
+      if (shapes[counter] == shape_ptr)this->object_hypothesis_list_[vector_index].insert(this->object_hypothesis_list_[vector_index].begin(),*it);
+      else this->object_hypothesis_list_[vector_index].push_back((*it));
     }
     else
     {
@@ -1116,11 +1120,7 @@ void ObjRecRANSAC::hypotheses2Shapes(list<AcceptedHypothesis>& hypotheses, vecto
     numOfPoints = (*hypo_it).model_entry->getOwnPointSet()->getNumberOfPoints();
     rigid_transform = (*hypo_it).rigid_transform;
     model_entry = (*hypo_it).model_entry;
-    if (verbose)
-    {
-      std::cerr << "Hypo number of points: " << numOfPoints << std::endl;
-    }
-
+    
     shape.reset();
     support = 0;
     // Get the current shape id
