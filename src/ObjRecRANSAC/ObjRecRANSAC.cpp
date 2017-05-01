@@ -152,32 +152,42 @@ void ObjRecRANSAC::generateAlternateSolutionFromFilteredShapes(const list<Accept
 
   std::map< boost::shared_ptr<ORRPointSetShape>, std::size_t> shape_vector_index;
   // std::map<std::string, int> shape_index;
+
+  pcl::KdTreeFLANN<pcl::PointXYZ> best_shapes_coordinate_tree;
+  pcl::PointCloud<pcl::PointXYZ>::Ptr best_shape_coordinate_points(new pcl::PointCloud<pcl::PointXYZ>());
+
   std::size_t counter = 0;
   for (list<boost::shared_ptr<ORRPointSetShape> >::const_iterator it = filtered_shapes.begin(); it != filtered_shapes.end(); ++it)
   {
+    std::cerr << "Best confidence shape ptr: " << *it << std::endl;
+    double **mat4x4 = mat_alloc(4, 4);
+    (*it)->getHomogeneousRigidTransform(mat4x4);
+    pcl::PointXYZ p(mat4x4[0][3], mat4x4[1][3], mat4x4[2][3]);
+
+    best_shape_coordinate_points->points.push_back(p);
+    mat_dealloc(mat4x4, 4);
+
     shape_vector_index[(*it)] = counter++;
   }
+
+  best_shapes_coordinate_tree.setInputCloud(best_shape_coordinate_points);
 
   counter = 0;
   // NOTE: accepted hypothesis and shapes element is aligned, which makes this work
 
   for (list<AcceptedHypothesis>::const_iterator it = accepted_hypotheses.begin(); it!= accepted_hypotheses.end(); ++it)
   {
-    boost::shared_ptr< ORRPointSetShape> shape_ptr = this->getBestShapePtr(shapes[counter]);
-    if (!shape_ptr) shape_ptr = shapes[counter];
+    // use KDtree instead of map
+    double *rigid_transform = it->rigid_transform;
+    pcl::PointXYZ p(rigid_transform[9],rigid_transform[10],rigid_transform[11]);
+    std::vector< int > k_indices(1);
+    std::vector< float > distances(1);
+    best_shapes_coordinate_tree.nearestKSearch(p, 1, k_indices, distances);
+    std::size_t vector_index = k_indices[0];
 
-    if (shape_vector_index.find(shape_ptr) != shape_vector_index.end())
-    {
-      std::size_t vector_index = shape_vector_index[shape_ptr];
-
-      // Put the best hypothesis in the front of the vector
-      if (shapes[counter] == shape_ptr)this->object_hypothesis_list_[vector_index].insert(this->object_hypothesis_list_[vector_index].begin(),*it);
-      else this->object_hypothesis_list_[vector_index].push_back((*it));
-    }
-    else
-    {
-      std::cerr << "Error, cannot find ptr: " << shape_ptr << " in the list of best shapes.\n";
-    }
+    if (distances[0] < 0.001)this->object_hypothesis_list_[vector_index].insert(this->object_hypothesis_list_[vector_index].begin(),*it);
+    else this->object_hypothesis_list_[vector_index].push_back((*it));
+    
     ++counter;
   }
 }
@@ -465,11 +475,6 @@ int ObjRecRANSAC::doRecognition(vtkPoints* scene, double successProbability, lis
       orr_normals->push_back(pcl::Normal(it->n2[0], it->n2[1], it->n2[2]));
     }
     pcl::concatenateFields (*points, *orr_normals, *orr_oriented_points);
-    pcl::PCLPointCloud2 orr_oriented_points_pc2;
-    pcl::toPCLPointCloud2(*orr_oriented_points, orr_oriented_points_pc2);
-    pcl::io::savePCDFile(
-        str(boost::format("orr_opoints.%1%.pcd") % mDebugNormals),
-        orr_oriented_points_pc2);
 
     // Dense ORR sampling
     points->clear();
@@ -496,10 +501,6 @@ int ObjRecRANSAC::doRecognition(vtkPoints* scene, double successProbability, lis
     mat_dealloc(pca_pts, 3);
 
     pcl::concatenateFields (*points, *orr_normals, *orr_oriented_points);
-    pcl::toPCLPointCloud2(*orr_oriented_points, orr_oriented_points_pc2);
-    pcl::io::savePCDFile(
-        str(boost::format("orr_opoints_dense.%1%.pcd") % mDebugNormals),
-        orr_oriented_points_pc2);
 
     // Compute normals via pcl
     pcl::PointCloud<pcl::Normal>::Ptr pcl_normals(new pcl::PointCloud<pcl::Normal>);
@@ -516,11 +517,6 @@ int ObjRecRANSAC::doRecognition(vtkPoints* scene, double successProbability, lis
     ne.compute (*pcl_normals);
 
     pcl::concatenateFields (*points, *pcl_normals, *pcl_oriented_points);
-    pcl::PCLPointCloud2 pcl_oriented_points_pc2;
-    pcl::toPCLPointCloud2(*pcl_oriented_points, pcl_oriented_points_pc2);
-    pcl::io::savePCDFile(
-        str(boost::format("pcl_opoints.%1%.pcd") % mDebugNormals),
-        pcl_oriented_points_pc2);
 
     // Use PCL to get the normals from all the points
     points->clear();
@@ -542,10 +538,6 @@ int ObjRecRANSAC::doRecognition(vtkPoints* scene, double successProbability, lis
     ne.compute (*pcl_normals);
 
     pcl::concatenateFields (*points, *pcl_normals, *pcl_oriented_points);
-    pcl::toPCLPointCloud2(*pcl_oriented_points, pcl_oriented_points_pc2);
-    pcl::io::savePCDFile(
-        str(boost::format("pcl_opoints_dense.%1%.pcd") % mDebugNormals),
-        pcl_oriented_points_pc2);
 
     mDebugNormals--;
   }
@@ -673,6 +665,7 @@ int ObjRecRANSAC::doRecognition(vtkPoints* scene, double successProbability, lis
   profile_oss<<"Average Hypotheses generation rate: "<<(mHypoGenRate / mDoRecognitionCount)<<" hypotheses/second"<<std::endl;
   std::cerr<<profile_oss.str()<<std::endl;
 #endif
+  return 0;
 }
 
 //=============================================================================================================================
