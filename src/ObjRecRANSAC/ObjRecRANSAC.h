@@ -35,6 +35,21 @@ using namespace std;
 using namespace tum;
 typedef boost::shared_ptr<ORRPointSetShape> p_shape_ptr;
 
+class AcceptedHypothesisWithConfidence : public AcceptedHypothesis
+{
+public:
+  AcceptedHypothesisWithConfidence(){ rigid_transform = NULL; match = 0; model_entry = NULL;}
+  AcceptedHypothesisWithConfidence(const AcceptedHypothesis &other, const double &confidence)
+  {
+    this->rigid_transform = other.rigid_transform;
+    this->match = other.match;
+    this->model_entry = other.model_entry;
+    this->confidence = confidence;
+  }
+  virtual ~AcceptedHypothesisWithConfidence(){}
+  double confidence;
+};
+
 class ObjRecRANSAC
 {
 public:
@@ -61,9 +76,9 @@ public:
   p_shape_ptr getBestShapePtr(const p_shape_ptr shape);
   
   void generateAlternateSolutionFromFilteredShapes(const list<AcceptedHypothesis> &accepted_hypotheses,
-  const vector<boost::shared_ptr<ORRPointSetShape> > &shapes, 
-  const list<boost::shared_ptr<ORRPointSetShape> > &filtered_shapes);
-  std::vector<std::vector<AcceptedHypothesis> > getShapeHypothesis();
+    const vector<boost::shared_ptr<ORRPointSetShape> > &shapes, 
+    const list<boost::shared_ptr<ORRPointSetShape> > &filtered_shapes);
+  std::vector<std::vector<AcceptedHypothesisWithConfidence> > getShapeHypothesis();
   // CUSTOM FUNCTION FOR SCENE PARSING
 
   bool addModel(vtkPolyData* model, UserData* userData);
@@ -209,7 +224,7 @@ protected:
 
   // CUSTOM VARIABLE FOR SEQUENTIAL SCENE
   std::map<std::string, vtkPolyData*> label_to_poly_map_;
-  std::vector<std::vector<AcceptedHypothesis> > object_hypothesis_list_;
+  std::vector<std::vector<AcceptedHypothesisWithConfidence> > object_hypothesis_list_;
   std::map<p_shape_ptr, p_shape_ptr > map_of_better_shape;
 };
 

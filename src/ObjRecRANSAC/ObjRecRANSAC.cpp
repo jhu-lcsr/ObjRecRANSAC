@@ -31,6 +31,11 @@ static T* vec2a(std::vector<T> &vec) {
   return &vec[0];
 }
 
+static bool compare_greater(const AcceptedHypothesisWithConfidence &lhs, const AcceptedHypothesisWithConfidence &rhs)
+{
+  return lhs.confidence > rhs.confidence;
+};
+
 ObjRecRANSAC::ObjRecRANSAC(double pairwidth, double voxelsize, double relNumOfPairsInHashTable)
 : mModelDatabase(pairwidth, voxelsize)
 {
@@ -184,15 +189,20 @@ void ObjRecRANSAC::generateAlternateSolutionFromFilteredShapes(const list<Accept
     std::vector< float > distances(1);
     best_shapes_coordinate_tree.nearestKSearch(p, 1, k_indices, distances);
     std::size_t vector_index = k_indices[0];
-
-    if (distances[0] < 0.001)this->object_hypothesis_list_[vector_index].insert(this->object_hypothesis_list_[vector_index].begin(),*it);
-    else this->object_hypothesis_list_[vector_index].push_back((*it));
+    AcceptedHypothesisWithConfidence hypothesis_to_add(*it, shapes[counter]->getConfidence());
+    this->object_hypothesis_list_[vector_index].push_back(hypothesis_to_add);
     
     ++counter;
   }
+  for (std::vector<std::vector<AcceptedHypothesisWithConfidence> >::iterator it = this->object_hypothesis_list_.begin();
+    it != this->object_hypothesis_list_.end(); ++it)
+  {
+    std::vector<AcceptedHypothesisWithConfidence> &object_hypotheses = *it;
+    std::sort(object_hypotheses.begin(),object_hypotheses.end(),compare_greater);
+  }
 }
 
-std::vector<std::vector<AcceptedHypothesis> > ObjRecRANSAC::getShapeHypothesis()
+std::vector<std::vector<AcceptedHypothesisWithConfidence> > ObjRecRANSAC::getShapeHypothesis()
 {
   for (std::size_t i = 0; i < this->object_hypothesis_list_.size(); i++)
   {
