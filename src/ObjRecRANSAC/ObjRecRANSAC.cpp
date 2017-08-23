@@ -24,11 +24,17 @@
 #include <pcl/features/normal_3d.h>
 #include <pcl/surface/gp3.h>
 
+#define OBJ_REC_RANSAC_VERBOSE
 
 template <class T>
 static T* vec2a(std::vector<T> &vec) {
   return &vec[0];
 }
+
+static bool compare_greater(const AcceptedHypothesisWithConfidence &lhs, const AcceptedHypothesisWithConfidence &rhs)
+{
+  return lhs.confidence > rhs.confidence;
+};
 
 ObjRecRANSAC::ObjRecRANSAC(double pairwidth, double voxelsize, double relNumOfPairsInHashTable)
 : mModelDatabase(pairwidth, voxelsize)
@@ -77,6 +83,133 @@ ObjRecRANSAC::ObjRecRANSAC(double pairwidth, double voxelsize, double relNumOfPa
 ObjRecRANSAC::~ObjRecRANSAC()
 {
   this->clear();
+}
+
+void ObjRecRANSAC::setSceneDataForHypothesisCheck(vtkPoints* scene)
+{
+  mInputScene = scene;
+  // Initialize
+  this->buildSceneOctree(scene, mVoxelSize);
+  mSceneRangeImage.buildFromOctree(mSceneOctree, mAbsZDistThresh, mAbsZDistThresh);
+  mOccupiedPixelsByShapes.clear();
+}
+
+double ObjRecRANSAC::checkHypothesesConfidence(AcceptedHypothesis &hypothesis, std::string &label)
+{
+  mShapes.clear();
+
+  // fill the hypothesis with the model information
+  // std::cerr << "Getting model entry.\n";
+  if (label_to_poly_map_.find(label) == label_to_poly_map_.end())
+  {
+    std::cerr << "ERROR: No mesh data for input object " << label << std::endl;
+    return 0.0;
+  }
+
+  hypothesis.model_entry = mModelDatabase.getModelEntry(label_to_poly_map_[label]);
+  list<AcceptedHypothesis> tmp_hypotheses;
+  tmp_hypotheses.push_back(hypothesis);
+  // std::cerr << "Calculating hypothesis confidence.\n";
+  this->hypotheses2Shapes(tmp_hypotheses, mShapes);
+  if (mShapes.size() > 0)
+  {
+    // std::cerr << "Hypothesis confidence: " << mShapes[0]->getConfidence() << std::endl;
+    return mShapes[0]->getConfidence();
+  }
+  else
+  {
+    std::cerr << "Fail to get the hypothesis confidence.\n";
+    return 0.0;
+  }
+}
+
+p_shape_ptr ObjRecRANSAC::getBestShapePtr(const p_shape_ptr shape)
+{
+  p_shape_ptr better_shape = this->map_of_better_shape[shape];
+  // if (shape) std::cerr << shape << " -> ";
+  // else
+  // {  std::cerr << "No ptr -> ";  }
+  if (better_shape)
+  {
+    p_shape_ptr even_better_shape = this->map_of_better_shape[better_shape];
+    if (even_better_shape)
+    {
+      this->map_of_better_shape[shape] = this->getBestShapePtr(better_shape);
+      return this->map_of_better_shape[shape];
+    }
+    else
+    {
+      // std::cerr << better_shape << " -> Best Shape" << std::endl;
+      return better_shape;
+    }
+  }
+  // std::cerr << "Best Shape" << std::endl;
+  return p_shape_ptr();
+}
+
+void ObjRecRANSAC::generateAlternateSolutionFromFilteredShapes(const list<AcceptedHypothesis> &accepted_hypotheses,
+  const vector<boost::shared_ptr<ORRPointSetShape> > &shapes, 
+  const list<boost::shared_ptr<ORRPointSetShape> > &filtered_shapes)
+{
+  // THIS ONLY WORKS UNDER ASSUMPTION THAT THERE IS ONLY ONE OBJECT CLASS PER ObjRecRANSAC
+  this->object_hypothesis_list_.clear();
+  this->object_hypothesis_list_.resize(filtered_shapes.size());
+
+  std::map< boost::shared_ptr<ORRPointSetShape>, std::size_t> shape_vector_index;
+  // std::map<std::string, int> shape_index;
+
+  pcl::KdTreeFLANN<pcl::PointXYZ> best_shapes_coordinate_tree;
+  pcl::PointCloud<pcl::PointXYZ>::Ptr best_shape_coordinate_points(new pcl::PointCloud<pcl::PointXYZ>());
+
+  std::size_t counter = 0;
+  for (list<boost::shared_ptr<ORRPointSetShape> >::const_iterator it = filtered_shapes.begin(); it != filtered_shapes.end(); ++it)
+  {
+    std::cerr << "Best confidence shape ptr: " << *it << std::endl;
+    double **mat4x4 = mat_alloc(4, 4);
+    (*it)->getHomogeneousRigidTransform(mat4x4);
+    pcl::PointXYZ p(mat4x4[0][3], mat4x4[1][3], mat4x4[2][3]);
+
+    best_shape_coordinate_points->points.push_back(p);
+    mat_dealloc(mat4x4, 4);
+
+    shape_vector_index[(*it)] = counter++;
+  }
+
+  best_shapes_coordinate_tree.setInputCloud(best_shape_coordinate_points);
+
+  counter = 0;
+  // NOTE: accepted hypothesis and shapes element is aligned, which makes this work
+
+  for (list<AcceptedHypothesis>::const_iterator it = accepted_hypotheses.begin(); it!= accepted_hypotheses.end(); ++it)
+  {
+    // use KDtree instead of map
+    double *rigid_transform = it->rigid_transform;
+    pcl::PointXYZ p(rigid_transform[9],rigid_transform[10],rigid_transform[11]);
+    std::vector< int > k_indices(1);
+    std::vector< float > distances(1);
+    best_shapes_coordinate_tree.nearestKSearch(p, 1, k_indices, distances);
+    std::size_t vector_index = k_indices[0];
+    AcceptedHypothesisWithConfidence hypothesis_to_add(*it, shapes[counter]->getConfidence());
+    this->object_hypothesis_list_[vector_index].push_back(hypothesis_to_add);
+    
+    ++counter;
+  }
+  for (std::vector<std::vector<AcceptedHypothesisWithConfidence> >::iterator it = this->object_hypothesis_list_.begin();
+    it != this->object_hypothesis_list_.end(); ++it)
+  {
+    std::vector<AcceptedHypothesisWithConfidence> &object_hypotheses = *it;
+    std::sort(object_hypotheses.begin(),object_hypotheses.end(),compare_greater);
+  }
+}
+
+std::vector<std::vector<AcceptedHypothesisWithConfidence> > ObjRecRANSAC::getShapeHypothesis()
+{
+  for (std::size_t i = 0; i < this->object_hypothesis_list_.size(); i++)
+  {
+    std::string label (this->object_hypothesis_list_[i][0].model_entry->getUserData()->getLabel());
+    std::cerr << "Object " << label << " " << i + 1 << " alternate poses : " << this->object_hypothesis_list_[i].size() << std::endl;
+  }
+  return this->object_hypothesis_list_;
 }
 
 //=============================================================================================================================
@@ -175,6 +308,8 @@ bool ObjRecRANSAC::addModel(vtkPolyData* model, UserData* userData)
   double relNumOfPairs = 1.0;
   // Create a new entry in the data base
   bool result = mModelDatabase.addModel(model, userData, mNumOfPointsPerLayer, relNumOfPairs);
+  
+  label_to_poly_map_[std::string(userData->getLabel())] = model;
 
   if ( relNumOfPairs < mRelNumOfPairsInTheHashTable )
     mRelNumOfPairsInTheHashTable = relNumOfPairs;
@@ -350,11 +485,6 @@ int ObjRecRANSAC::doRecognition(vtkPoints* scene, double successProbability, lis
       orr_normals->push_back(pcl::Normal(it->n2[0], it->n2[1], it->n2[2]));
     }
     pcl::concatenateFields (*points, *orr_normals, *orr_oriented_points);
-    pcl::PCLPointCloud2 orr_oriented_points_pc2;
-    pcl::toPCLPointCloud2(*orr_oriented_points, orr_oriented_points_pc2);
-    pcl::io::savePCDFile(
-        str(boost::format("orr_opoints.%1%.pcd") % mDebugNormals),
-        orr_oriented_points_pc2);
 
     // Dense ORR sampling
     points->clear();
@@ -381,10 +511,6 @@ int ObjRecRANSAC::doRecognition(vtkPoints* scene, double successProbability, lis
     mat_dealloc(pca_pts, 3);
 
     pcl::concatenateFields (*points, *orr_normals, *orr_oriented_points);
-    pcl::toPCLPointCloud2(*orr_oriented_points, orr_oriented_points_pc2);
-    pcl::io::savePCDFile(
-        str(boost::format("orr_opoints_dense.%1%.pcd") % mDebugNormals),
-        orr_oriented_points_pc2);
 
     // Compute normals via pcl
     pcl::PointCloud<pcl::Normal>::Ptr pcl_normals(new pcl::PointCloud<pcl::Normal>);
@@ -401,11 +527,6 @@ int ObjRecRANSAC::doRecognition(vtkPoints* scene, double successProbability, lis
     ne.compute (*pcl_normals);
 
     pcl::concatenateFields (*points, *pcl_normals, *pcl_oriented_points);
-    pcl::PCLPointCloud2 pcl_oriented_points_pc2;
-    pcl::toPCLPointCloud2(*pcl_oriented_points, pcl_oriented_points_pc2);
-    pcl::io::savePCDFile(
-        str(boost::format("pcl_opoints.%1%.pcd") % mDebugNormals),
-        pcl_oriented_points_pc2);
 
     // Use PCL to get the normals from all the points
     points->clear();
@@ -427,10 +548,6 @@ int ObjRecRANSAC::doRecognition(vtkPoints* scene, double successProbability, lis
     ne.compute (*pcl_normals);
 
     pcl::concatenateFields (*points, *pcl_normals, *pcl_oriented_points);
-    pcl::toPCLPointCloud2(*pcl_oriented_points, pcl_oriented_points_pc2);
-    pcl::io::savePCDFile(
-        str(boost::format("pcl_opoints_dense.%1%.pcd") % mDebugNormals),
-        pcl_oriented_points_pc2);
 
     mDebugNormals--;
   }
@@ -442,16 +559,26 @@ int ObjRecRANSAC::doRecognition(vtkPoints* scene, double successProbability, lis
   // Accept hypotheses
   tictoc_names.push_back("accept hypotheses"); intraStopwatch.start();
   this->acceptHypotheses(accepted_hypotheses);
+  // this->object_hypothesis_list_ = accepted_hypotheses;
+  std::cerr << "Accepted Hypothesis: " << accepted_hypotheses.size() << std::endl;
+
   tictocs.push_back(intraStopwatch.stop());
   // Convert the accepted hypotheses to shapes
   tictoc_names.push_back("convert to shapes"); intraStopwatch.start();
   this->hypotheses2Shapes(accepted_hypotheses, mShapes);
+  std::cerr << "Number of shapes: " << mShapes.size() << std::endl;
   tictocs.push_back(intraStopwatch.stop());
 
   // Filter the weak hypotheses
   tictoc_names.push_back("filter weak"); intraStopwatch.start();
+  this->map_of_better_shape.clear();
+  // std::map<p_shape_ptr, p_shape_ptr > map_of_better_shape;
   this->gridBasedFiltering(mShapes, detectedShapes);
+  std::cerr << "Filtered shapes: " << detectedShapes.size() << std::endl;
   tictocs.push_back(intraStopwatch.stop());
+
+  this->generateAlternateSolutionFromFilteredShapes(accepted_hypotheses, mShapes, detectedShapes);
+  // this->getShapeHypothesis();
 
   // Save the shapes in 'out'
   tictoc_names.push_back("save shapes"); intraStopwatch.start();
@@ -548,6 +675,7 @@ int ObjRecRANSAC::doRecognition(vtkPoints* scene, double successProbability, lis
   profile_oss<<"Average Hypotheses generation rate: "<<(mHypoGenRate / mDoRecognitionCount)<<" hypotheses/second"<<std::endl;
   std::cerr<<profile_oss.str()<<std::endl;
 #endif
+  return 0;
 }
 
 //=============================================================================================================================
@@ -693,7 +821,7 @@ void ObjRecRANSAC::generateHypotheses(const list<OrientedPair>& pairs)
 #endif
   }
 #ifdef OBJ_REC_RANSAC_VERBOSE
-  printf("\r%.1lf%% done [%i hypotheses]\n", ((double)i)*factor, mNumOfHypothesea); fflush(stdout);
+  printf("\r%.1lf%% done [%i hypotheses]\n", ((double)i)*factor, mNumOfHypotheses); fflush(stdout);
 
 #endif
 
@@ -959,9 +1087,12 @@ void ObjRecRANSAC::acceptHypotheses(list<AcceptedHypothesis>& acceptedHypotheses
     }
   }
 
+  std::cerr << "Number of accepted hypotheses: " << acceptedHypotheses.size() << std::endl;
+
 #ifdef OBJ_REC_RANSAC_VERBOSE
   printf("%i accepted.\n", (int)acceptedHypotheses.size()); fflush(stdout);
 #endif
+
 }
 
 //=============================================================================================================================
@@ -992,6 +1123,7 @@ void ObjRecRANSAC::hypotheses2Shapes(list<AcceptedHypothesis>& hypotheses, vecto
     numOfPoints = (*hypo_it).model_entry->getOwnPointSet()->getNumberOfPoints();
     rigid_transform = (*hypo_it).rigid_transform;
     model_entry = (*hypo_it).model_entry;
+    
     shape.reset();
     support = 0;
     // Get the current shape id
@@ -1005,7 +1137,9 @@ void ObjRecRANSAC::hypotheses2Shapes(list<AcceptedHypothesis>& hypotheses, vecto
       pixel = mSceneRangeImage.getSafePixel(p[0], p[1], x, y);
       // Check if we have a valid pixel
       if ( pixel == NULL )
+      {
         continue;
+      }
 
       // Check if the pixel is OK
       if ( pixel->x <= p[2] && p[2] <= pixel->y )
@@ -1079,6 +1213,9 @@ void ObjRecRANSAC::gridBasedFiltering(vector<boost::shared_ptr<ORRPointSetShape>
   set<std::pair<int,int>, bool(*)(std::pair<int,int>, std::pair<int,int>)> both_on(cmp_int_pairs);
   std::pair<int,int> on_pair;
 
+  // TODO: Make a map of result id that associate the shapes/hypothesis with the resulting object id
+  // std::map<boost::shared_ptr<ORRPointSetShape>, boost::shared_ptr<ORRPointSetShape> > map_of_better_shape;
+
 #ifdef OBJ_REC_RANSAC_VERBOSE
   printf("ObjRecRANSAC::%s(): We have %i shapes to filter.\n", __func__, (int)shapes.size());
 #endif
@@ -1108,19 +1245,28 @@ void ObjRecRANSAC::gridBasedFiltering(vector<boost::shared_ptr<ORRPointSetShape>
 
         if ( this->significantIntersection(*it1, *it2) )
         {
+          // TODO: Set the turned off object id to the turned on object id, so that we will have a collection of main object id and possible object id
           if ( (*it1)->getNumberOfOccupiedScenePixels() <= (*it2)->getNumberOfOccupiedScenePixels() )
           {
 #ifdef OBJ_REC_RANSAC_VERBOSE_1
             printf("[turn off %s]\n", (*it1)->getLabel());
 #endif
             (*it1)->setSceneStateOff();
+            // std::cerr << " Turn off pointer1 " << (*it1) << " to " << (*it2) << std::endl;
+            this->map_of_better_shape[ (*it1) ] = (*it2);
+            // (*it1)->getUserData()->setBetterShapePtr(boost::static_pointer_cast<void>( *it2 ));
           }
           else
           {
 #ifdef OBJ_REC_RANSAC_VERBOSE_1
             printf("[turn off %s]\n", (*it2)->getLabel());
 #endif
-            (*it2)->setSceneStateOff();
+            if ((*it2)->isSceneStateOn())
+            {
+              (*it2)->setSceneStateOff();
+              // std::cerr << " Turn off pointer2 " << (*it2) << " to " << (*it1) << std::endl;
+              this->map_of_better_shape[ (*it2) ] = (*it1);
+            }
           }
         }
         else
