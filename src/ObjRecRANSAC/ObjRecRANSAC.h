@@ -26,11 +26,29 @@
 #include <vector>
 #include <cmath>
 #include <list>
+#include <map>
+#include <sstream>
 
 #include <boost/thread/recursive_mutex.hpp>
 
 using namespace std;
 using namespace tum;
+typedef boost::shared_ptr<ORRPointSetShape> p_shape_ptr;
+
+class AcceptedHypothesisWithConfidence : public AcceptedHypothesis
+{
+public:
+  AcceptedHypothesisWithConfidence(){ rigid_transform = NULL; match = 0; model_entry = NULL;}
+  AcceptedHypothesisWithConfidence(const AcceptedHypothesis &other, const double &confidence)
+  {
+    this->rigid_transform = other.rigid_transform;
+    this->match = other.match;
+    this->model_entry = other.model_entry;
+    this->confidence = confidence;
+  }
+  virtual ~AcceptedHypothesisWithConfidence(){}
+  double confidence;
+};
 
 class ObjRecRANSAC
 {
@@ -50,6 +68,18 @@ public:
 public:
   ObjRecRANSAC(double pairwidth, double voxelsize, double relNumOfPairsInHashTable = 0.8);
   virtual ~ObjRecRANSAC();
+
+  // CUSTOM FUNCTION FOR SCENE PARSING
+  void setSceneDataForHypothesisCheck(vtkPoints* scene);
+  double checkHypothesesConfidence(AcceptedHypothesis &hypothesis, std::string &label);
+
+  p_shape_ptr getBestShapePtr(const p_shape_ptr shape);
+  
+  void generateAlternateSolutionFromFilteredShapes(const list<AcceptedHypothesis> &accepted_hypotheses,
+    const vector<boost::shared_ptr<ORRPointSetShape> > &shapes, 
+    const list<boost::shared_ptr<ORRPointSetShape> > &filtered_shapes);
+  std::vector<std::vector<AcceptedHypothesisWithConfidence> > getShapeHypothesis();
+  // CUSTOM FUNCTION FOR SCENE PARSING
 
   bool addModel(vtkPolyData* model, UserData* userData);
   /** Do NOT forget to delete the shapes saved in 'detectedShapes' after using them! */
@@ -124,6 +154,7 @@ protected:
                              HashTableCell** cells, int numOfCells);
   inline void collectCenteredPoints(list<OctreeNode*>& nodes, double** out);
   inline double* estimateNodeNormal(double** ptsToUse, OctreeNode* node, ORROctreeNodeData* node_data);
+
   void gridBasedFiltering(vector<boost::shared_ptr<ORRPointSetShape> >& shapes, list<boost::shared_ptr<ORRPointSetShape> >& out);
   inline int computeNumberOfIterations(double successProbability, int numOfScenePoints) const;
   inline void estimateSceneNormals();
@@ -190,6 +221,11 @@ protected:
   double mHypoGenRate;
   double mProfiling[12];
   int mDoRecognitionCount;
+
+  // CUSTOM VARIABLE FOR SEQUENTIAL SCENE
+  std::map<std::string, vtkPolyData*> label_to_poly_map_;
+  std::vector<std::vector<AcceptedHypothesisWithConfidence> > object_hypothesis_list_;
+  std::map<p_shape_ptr, p_shape_ptr > map_of_better_shape;
 };
 
 //=== inline methods ==============================================================================================
