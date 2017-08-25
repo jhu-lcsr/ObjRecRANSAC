@@ -24,7 +24,7 @@
 #include <pcl/features/normal_3d.h>
 #include <pcl/surface/gp3.h>
 
-#define OBJ_REC_RANSAC_VERBOSE
+// #define OBJ_REC_RANSAC_VERBOSE
 
 template <class T>
 static T* vec2a(std::vector<T> &vec) {
@@ -164,7 +164,6 @@ void ObjRecRANSAC::generateAlternateSolutionFromFilteredShapes(const list<Accept
   std::size_t counter = 0;
   for (list<boost::shared_ptr<ORRPointSetShape> >::const_iterator it = filtered_shapes.begin(); it != filtered_shapes.end(); ++it)
   {
-    std::cerr << "Best confidence shape ptr: " << *it << std::endl;
     double **mat4x4 = mat_alloc(4, 4);
     (*it)->getHomogeneousRigidTransform(mat4x4);
     pcl::PointXYZ p(mat4x4[0][3], mat4x4[1][3], mat4x4[2][3]);
@@ -180,27 +179,25 @@ void ObjRecRANSAC::generateAlternateSolutionFromFilteredShapes(const list<Accept
   counter = 0;
 
   int x, y;
-  double p[3], *rigid_transform;
+  double px[3], *rigid_transform;
   const double *mp;
   const double_2* pixel;
 
   // NOTE: accepted hypothesis and shapes element is aligned, which makes this work
   for (list<AcceptedHypothesis>::const_iterator it = accepted_hypotheses.begin(); it!= accepted_hypotheses.end(); ++it, ++counter)
   {
-    double *rigid_transform = it->rigid_transform;
+    const double *rigid_transform = shapes[counter]->getRigidTransform();
     mp = it->model_entry->getOwnPointSet()->getPoints_const();
-    mat_mult3_by_rigid<double>(rigid_transform, mp, p);
-    pixel = mSceneRangeImage.getSafePixel(p[0], p[1], x, y);
-
+    mat_mult3_by_rigid<double>(rigid_transform, mp, px);
+    pixel = mSceneRangeImage.getSafePixel(px[0], px[1], x, y);
     // Check if we have a valid pixel
     if ( pixel == NULL )
     {
       continue;
     }
-
-    // Check if the pixel is OK
-    if ( pixel->x <= p[2] && p[2] <= pixel->y )
+    else if ( pixel->x <= px[2] && px[2] <= pixel->y )
     {
+      // Check if the pixel is OK
       // use KDtree instead of map
       pcl::PointXYZ p(rigid_transform[9],rigid_transform[10],rigid_transform[11]);
       std::vector< int > k_indices(1);
@@ -587,7 +584,6 @@ int ObjRecRANSAC::doRecognition(vtkPoints* scene, double successProbability, lis
   // Convert the accepted hypotheses to shapes
   tictoc_names.push_back("convert to shapes"); intraStopwatch.start();
   this->hypotheses2Shapes(accepted_hypotheses, mShapes);
-  std::cerr << "Number of shapes: " << mShapes.size() << std::endl;
   tictocs.push_back(intraStopwatch.stop());
 
   // Filter the weak hypotheses
