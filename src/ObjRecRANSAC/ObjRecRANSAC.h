@@ -38,7 +38,7 @@ typedef boost::shared_ptr<ORRPointSetShape> p_shape_ptr;
 class AcceptedHypothesisWithConfidence : public AcceptedHypothesis
 {
 public:
-  AcceptedHypothesisWithConfidence(){ rigid_transform = NULL; match = 0; model_entry = NULL;}
+  AcceptedHypothesisWithConfidence() : confidence(0.0) { rigid_transform = NULL; match = 0; model_entry = NULL;}
   AcceptedHypothesisWithConfidence(const AcceptedHypothesis &other, const double &confidence)
   {
     this->rigid_transform = other.rigid_transform;

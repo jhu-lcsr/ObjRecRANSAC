@@ -178,22 +178,40 @@ void ObjRecRANSAC::generateAlternateSolutionFromFilteredShapes(const list<Accept
   best_shapes_coordinate_tree.setInputCloud(best_shape_coordinate_points);
 
   counter = 0;
-  // NOTE: accepted hypothesis and shapes element is aligned, which makes this work
 
-  for (list<AcceptedHypothesis>::const_iterator it = accepted_hypotheses.begin(); it!= accepted_hypotheses.end(); ++it)
+  int x, y;
+  double p[3], *rigid_transform;
+  const double *mp;
+  const double_2* pixel;
+
+  // NOTE: accepted hypothesis and shapes element is aligned, which makes this work
+  for (list<AcceptedHypothesis>::const_iterator it = accepted_hypotheses.begin(); it!= accepted_hypotheses.end(); ++it, ++counter)
   {
-    // use KDtree instead of map
     double *rigid_transform = it->rigid_transform;
-    pcl::PointXYZ p(rigid_transform[9],rigid_transform[10],rigid_transform[11]);
-    std::vector< int > k_indices(1);
-    std::vector< float > distances(1);
-    best_shapes_coordinate_tree.nearestKSearch(p, 1, k_indices, distances);
-    std::size_t vector_index = k_indices[0];
-    AcceptedHypothesisWithConfidence hypothesis_to_add(*it, shapes[counter]->getConfidence());
-    this->object_hypothesis_list_[vector_index].push_back(hypothesis_to_add);
-    
-    ++counter;
+    mp = it->model_entry->getOwnPointSet()->getPoints_const();
+    mat_mult3_by_rigid<double>(rigid_transform, mp, p);
+    pixel = mSceneRangeImage.getSafePixel(p[0], p[1], x, y);
+
+    // Check if we have a valid pixel
+    if ( pixel == NULL )
+    {
+      continue;
+    }
+
+    // Check if the pixel is OK
+    if ( pixel->x <= p[2] && p[2] <= pixel->y )
+    {
+      // use KDtree instead of map
+      pcl::PointXYZ p(rigid_transform[9],rigid_transform[10],rigid_transform[11]);
+      std::vector< int > k_indices(1);
+      std::vector< float > distances(1);
+      best_shapes_coordinate_tree.nearestKSearch(p, 1, k_indices, distances);
+      std::size_t vector_index = k_indices[0];
+      AcceptedHypothesisWithConfidence hypothesis_to_add(*it, shapes[counter]->getConfidence());
+      this->object_hypothesis_list_[vector_index].push_back(hypothesis_to_add);
+    }
   }
+  
   for (std::vector<std::vector<AcceptedHypothesisWithConfidence> >::iterator it = this->object_hypothesis_list_.begin();
     it != this->object_hypothesis_list_.end(); ++it)
   {
@@ -206,8 +224,11 @@ std::vector<std::vector<AcceptedHypothesisWithConfidence> > ObjRecRANSAC::getSha
 {
   for (std::size_t i = 0; i < this->object_hypothesis_list_.size(); i++)
   {
-    std::string label (this->object_hypothesis_list_[i][0].model_entry->getUserData()->getLabel());
-    std::cerr << "Object " << label << " " << i + 1 << " alternate poses : " << this->object_hypothesis_list_[i].size() << std::endl;
+    if (this->object_hypothesis_list_[i].size() > 0)
+    {
+      std::string label (this->object_hypothesis_list_[i][0].model_entry->getUserData()->getLabel());
+      std::cerr << "Object " << label << " " << i + 1 << " alternate poses : " << this->object_hypothesis_list_[i].size() << std::endl;
+    }
   }
   return this->object_hypothesis_list_;
 }
@@ -576,8 +597,9 @@ int ObjRecRANSAC::doRecognition(vtkPoints* scene, double successProbability, lis
   this->gridBasedFiltering(mShapes, detectedShapes);
   std::cerr << "Filtered shapes: " << detectedShapes.size() << std::endl;
   tictocs.push_back(intraStopwatch.stop());
-
-  this->generateAlternateSolutionFromFilteredShapes(accepted_hypotheses, mShapes, detectedShapes);
+  this->object_hypothesis_list_.clear();
+  
+  if (detectedShapes.size() > 0) this->generateAlternateSolutionFromFilteredShapes(accepted_hypotheses, mShapes, detectedShapes);
   // this->getShapeHypothesis();
 
   // Save the shapes in 'out'
